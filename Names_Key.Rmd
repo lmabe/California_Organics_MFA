@@ -1,0 +1,1035 @@
+---
+title: "Name_Lookup_Table"
+output: html_document
+date: "2025-09-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# load data
+```{r}
+
+
+library(tidyr)
+library(stringr)
+
+mypath <- "C:/Users/Lenovo/Box/Research/"
+
+```
+
+
+# Franchise Agreement Data - 10/23/2025
+I added about 20 new franchise agreements to the list, so just want to make sure those facilities are also in the names key
+```{r}
+
+FA <- read.csv(paste0(mypath, "Primary_Data_Files/Franchise_Agreements/Franchise_Agreement_Data_Cleaned.csv"))
+
+FA$Des_Facs <- str_replace_all(FA$Des_Facs, ";", ",")
+
+
+FA <- separate_longer_delim(FA, "Des_Facs", delim = ",")
+
+
+# remove period and leading/trailing whitespace
+FA$Des_Facs <- str_replace_all(FA$Des_Facs, "\\.", "")
+FA$Des_Facs <-trimws(FA$Des_Facs)
+
+# fix some typos
+FA$Des_Facs[FA$Des_Facs %in% c("No Designated Site", "None", "None specified", 
+                               "Not applicable C&D waste or commercial recyclables only", 
+                               "not specifid", "not specified", "Not specified")] <- "Not Specified"
+
+
+
+
+```
+
+
+```{r}
+key <- read.csv(paste0(mypath, "MFA_Data/Facility_Names_Key4.csv"))
+
+
+
+temp <- merge(key[c("Dataset_Name", "Standard_Name")], FA[c("File_Name", "City", "Des_Facs")],
+              by.x = "Dataset_Name", by.y = "Des_Facs", all = TRUE)
+
+in_key <- temp[!is.na(temp$Dataset_Name) & !is.na(temp$Standard_Name) & !is.na(temp$File_Name),]
+out_key <- temp[is.na(temp$Standard_Name),]
+
+
+```
+Many of the ones in the out_key dont need to be added to the names key file. Such as "Republics choice" etc
+
+```{r}
+
+# select ones that need to be added
+out_key <- out_key[out_key$Dataset_Name %in% c("Altamont Landfill & Resource Recovery", "Blossom Valley Organics North", 
+  "GreenWaste Materials Processing Facility", "Hay Road Landfill", "Napa Material Diversion Facility", 
+  "Newby Island Composting Facility", "Portola Landfill", 
+  "Recology Jepson Prairie Organics", "Tracy Material Recovery and Solid Waste Transfer Facility", 
+  "Turlock Recycling Facility", "WCCSL Organic Materials Processing Facility"),]
+
+
+# remove duplicates
+out_key <- out_key[!duplicated(out_key$Dataset_Name),]
+
+
+# match columns
+out_key$RDRS_ID <- NA
+out_key$SWIS_Number <- NA
+out_key$Full_ID <- NA
+out_key$ActivityGeneral <- out_key$File_Name
+out_key$Type <- out_key$City
+
+
+out_key <- out_key[c("RDRS_ID", "Dataset_Name", "Standard_Name", "SWIS_Number",
+                     "Full_ID", "ActivityGeneral", "Type")]
+
+
+key <- rbind(key, out_key)
+
+
+##write.csv(key, paste0(mypath, "MFA_Data/Facility_Names_Key4.csv"))
+```
+
+
+# Franchise Agreement Data - 10/16/24
+The cleaned data from the franchise agreements needs to be added to the names key
+```{r}
+
+
+FA <- read.csv(paste0(mypath, "Primary_Data_Files/Franchise_Agreements/Franchise_Agreement_Data_Cleaned.csv"))
+
+
+FA$Des_Facs <- str_replace_all(FA$Des_Facs, ";", ",")
+
+
+
+
+```
+
+```{r}
+
+FA <- separate_longer_delim(FA, "Des_Facs", delim = ",")
+
+
+# remove period and leading/trailing whitespace
+FA$Des_Facs <- str_replace_all(FA$Des_Facs, "\\.", "")
+FA$Des_Facs <-trimws(FA$Des_Facs)
+
+# fix some typos
+FA$Des_Facs[FA$Des_Facs %in% c("No Designated Site", "None", "None specified", 
+                               "Not applicable C&D waste or commercial recyclables only", 
+                               "not specifid", "not specified", "Not specified")] <- "Not Specified"
+
+
+
+
+```
+
+We can now merge these onto the names key and see what is already there
+
+Some lines, such as (any county facility, Allied's choice) etc will have to be dealt with separately
+```{r}
+key <- read.csv(paste0(mypath, "MFA_Data/Facility_Names_Key2.csv"))
+
+str(key)
+```
+
+```{r}
+
+temp <- merge(key[c("Dataset_Name", "Standard_Name")], FA[c("File_Name", "City", "Des_Facs")],
+              by.x = "Dataset_Name", by.y = "Des_Facs", all = TRUE)
+
+in_key <- temp[!is.na(temp$Dataset_Name) & !is.na(temp$Standard_Name) & !is.na(temp$File_Name),]
+out_key <- temp[is.na(temp$Standard_Name),]
+
+
+```
+If Dataset_Name, Standard_Name, and File_Name both have something, then that name is already in the Names Key
+If Standard_Name is NA, then that Des_Fac is not in the Names Key
+
+We now need to add the out_key names to the Names Key
+```{r}
+
+#
+out_key$Dataset_Name <- trimws(out_key$Dataset_Name)
+
+# remove "not specified"
+out_key <- out_key[out_key$Dataset_Name != "Not Specified",]
+
+# remove duplicates
+out_key <- out_key[!duplicated(out_key$Dataset_Name),]
+
+
+
+# match columns
+out_key$RDRS_ID <- NA
+out_key$SWIS_Number <- NA
+out_key$Full_ID <- NA
+out_key$ActivityGeneral <- out_key$File_Name
+out_key$Type <- out_key$City
+
+
+out_key <- out_key[c("RDRS_ID", "Dataset_Name", "Standard_Name", "SWIS_Number",
+                     "Full_ID", "ActivityGeneral", "Type")]
+
+
+key <- rbind(key, out_key)
+
+
+##write.csv(key, paste0(mypath, "MFA_Data/Facility_Names_Key3.csv"))
+
+```
+now go through these manually......
+
+
+# RDRS - Based Datasets
+## PRA Disposal data
+```{r}
+
+disposal <- read.csv(paste0(mypath, "MFA_Data/Public_Records_Requests/PRA_data_5302025_DisposalRelatedOutflows.csv"))
+disposal$Origin_Entity <- trimws(disposal$Origin_Entity)
+disposal$Destination_Entity <- trimws(disposal$Destination_Entity)
+
+
+
+
+
+origin <- disposal[,c("Origin_Org", "Origin_Entity", "Origin_Activity", "Origin_RD", "Origin_SWIS")]
+origin$Origin_RD <- paste0("RD", origin$Origin_RD) # add RD
+colnames(origin) <- c("Organization", "Entity", "Activity", "RDRS_ID", "SWIS")
+
+
+# remove duplicates
+origin <- origin[!duplicated(origin[,c("Organization", "Entity")]),]
+
+
+# destinations
+dest <- disposal[,c("Destination_Org", "Destination_Entity", "Destination_Activity_Type", "Destination_RD")]
+dest$Destination_RD <- paste0("RD", dest$Destination_RD)
+colnames(dest) <- c("Organization", "Entity", "Activity", "RDRS_ID")
+dest$SWIS <- NA
+
+dest <- dest[!duplicated(dest[,c("Organization", "Entity")]),]
+
+```
+
+
+
+## RDRS_ID Database
+Were going to save this for later!!!
+If she wants to deal with this then she can after she has more added...
+```{r}
+
+ID <- read.csv(paste0(mypath,"CalRecycle_Public_Records_Requests/Registered_Reporting_Entities_All.csv"))#
+
+# needed columns
+ID <- ID[,c("RDRS_ID", "ReportingEntity", "ActivityName", "ActivityGeneral", "SWIS_Number")]
+
+
+# only recycler/composter or transfer/processer
+ID <- ID[ID$ActivityGeneral %in% c("Recycler/Composter", "Transfer/Processor", "Landfill"),]
+
+bad_word_list <- c("water reclamation", "water treatment", "wastewater", "biosolid",
+                   "sewer", "treatment plant", "water quality", "water recycling", 
+                   "metal", "scrap", "steel", "salvage", "aluminum","alloy", 
+                   "tire", "rubber", 
+                   "construction", "demolition", "inert", "gypsum","concrete",
+                   "asphalt","quarry", "aggregate", "cemex", "pavement", "crush", "gravel", 
+                   "battery", "batteries", "ewaste", "e-waste", "electronic", 
+                   "plastic", "poly", "bottle", "cans", "commodit", 
+                   "container", "pallet", "packaging", "rent-a-bin", 
+                   "mattress", "carpet", "fiber", "fibre", "paper", "shred",
+                   "trading", "export", "dairy", "test", "inactivate", 
+                   "ecology recycling", "replanet", "trucking")
+
+
+for(i in bad_word_list){
+    #print(paste0(i, " removes ", length(grep(i, tolower(ID$ReportingEntity)))))
+    ID <- ID[-grep(i, tolower(ID$ReportingEntity)),]
+}
+
+
+# do the same for the activity name
+# the grep in the subset makes the df go blank if the word is missing
+## so, remove words from bad word list
+bad_word_list <- bad_word_list[-which(bad_word_list %in% c("sewer", "water quality",
+                                                           "scrap", "steel", "salvage", "aluminum","alloy",
+                                                           "rubber", "demolition", "gypsum",
+                                                           "quarry", "cemex", "pavement",
+                                                           "battery", "batteries", "ewaste", "electronic",
+                                                           "plastic", "bottle", "cans", "commodit", "container", 
+                                                           "pallet", "packaging", "rent-a-bin", 
+                                                           "mattress", "carpet", "fiber", "fibre",
+                                                           "shred", "trading", "export", "test", "inactivate",
+                                                           "ecology recycling", "trucking"))]
+
+for(i in bad_word_list){
+    #print(paste0(i, " removes ", length(grep(i, tolower(ID$ActivityName)))))
+    ID <- ID[-grep(i, tolower(ID$ActivityName)),]
+}
+
+ID <- ID[-grep("oil recycling", tolower(ID$ActivityName)),]
+ID <- ID[-grep("bulky", tolower(ID$ActivityName)),]
+ID <- ID[-grep("cdi", tolower(ID$ActivityName)),]
+ID <- ID[-grep("wwtp", tolower(ID$ActivityName)),]
+ID <- ID[-grep("grit", tolower(ID$ActivityName)),]
+
+
+```
+
+## Disposal thru Transfer Stations
+```{r}
+
+transfer <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/TotalJurisdictionDisposalTransferProcessor.csv"))
+
+# needed columns, rows
+transfer_Org <- transfer[transfer$Originating_Organization != "",
+                         c("Originating_Organization", "Originating_Type")]
+
+transfer_Org <- transfer_Org[!duplicated(transfer_Org$Originating_Organization),] # remove duplicates
+
+# pull activity/entities out of the string
+transfer_Org$Entity <- gsub(".*\\((.*)\\).*", "\\1",transfer_Org$Originating_Organization)
+transfer_Org$Originating_Organization <- sub("\\(.*", "", transfer_Org$Originating_Organization) # remove entity
+transfer_Org$Originating_Organization <- trimws(transfer_Org$Originating_Organization)
+
+
+# pull RDRS_ID
+transfer_Org$RDRS_ID <- substring(transfer_Org$Entity,nchar(transfer_Org$Entity)-7+1)
+transfer_Org$Entity <- substring(transfer_Org$Entity, 1,nchar(transfer_Org$Entity)-10 +1) # remove RDRS from entitiy
+
+# rearrange columns
+transfer_Org <- transfer_Org[,c(1,3,4,2)]
+colnames(transfer_Org) <- c("Organization", "Entity", "RDRS_ID", "Activity")
+
+
+
+
+#Destinations
+transfer_Dest <- transfer[, c("Destination_Organization", "Destination_Entity_Type")]
+    
+transfer_Dest <- transfer_Dest[!duplicated(transfer_Dest$Destination_Organization),]
+
+transfer_Dest$Entity <- gsub(".*\\((.*)\\).*", "\\1",transfer_Dest$Destination_Organization)
+transfer_Dest$Destination_Organization <- sub("\\(.*", "", transfer_Dest$Destination_Organization) # remove entity
+transfer_Dest$Destination_Organization <- trimws(transfer_Dest$Destination_Organization)
+
+# RDRS_ID
+transfer_Dest$RDRS_ID <- substring(transfer_Dest$Entity,nchar(transfer_Dest$Entity)-7+1)
+transfer_Dest$Entity <- substring(transfer_Dest$Entity,1,nchar(transfer_Dest$Entity)-10+1)
+
+# rearrange columns
+transfer_Dest <- transfer_Dest[,c(1,3,4,2)]
+colnames(transfer_Dest) <- c("Organization", "Entity", "RDRS_ID", "Activity")
+
+
+transfer <- rbind(transfer_Org, transfer_Dest)
+
+str(transfer)
+
+```
+
+## Merge together
+```{r}
+
+# test merge
+
+temp <- ID[ID$ActivityGeneral == "Landfill",]
+temp2 <- transfer[transfer$Activity == "Landfill",]
+
+
+temp3 <- merge(temp, temp2, by = "RDRS_ID", all = TRUE)
+
+temp3 <- pivot_longer(temp3, c("ReportingEntity", "ActivityName", "Organization", "Entity"))
+
+```
+
+# ID to transfer station and PRA data
+```{r}
+# ID to transfer station and PRA data
+
+
+
+temp <- merge(ID, transfer, by = "RDRS_ID", all = TRUE)
+
+# pivot from wide to long
+# the rows added by the merge are now one column
+temp <- pivot_longer(temp, c("ReportingEntity", "ActivityName", "Organization", "Entity"))
+
+
+temp <- temp[!is.na(temp$value),]
+
+# remove duplicate name + RDRS ID combos
+temp <- temp[!duplicated(temp[,c("RDRS_ID", "value")]),]
+
+
+
+# add PRA greenwaste origins
+temp <- merge(temp, origin, by = "RDRS_ID", all = TRUE)
+colnames(temp)[which(colnames(temp) %in% c("name", "value",
+                                           "Organization", "Entity"))] <- c("type", "ID.transfer",
+                                                                            "Org", "Ent")
+temp <- pivot_longer(temp, c("ID.transfer", "Org", "Ent"))
+temp <- temp[!is.na(temp$value),]
+temp <- temp[!duplicated(temp[,c("RDRS_ID", "value")]),]
+
+
+colnames(temp)[which(colnames(temp) %in% c("name", "value"))] <- c("dataset", "Facility")
+temp$dataset[temp$dataset %in% c("Org", "Ent")] <- "PRA"
+
+
+temp <- temp[,c("RDRS_ID","Facility", "SWIS_Number", "SWIS", "dataset", "type")]
+colnames(temp) <- c("RDRS_ID","Facility", "SWIS_Number", "SWIS_No", "dataset", "type")
+
+# add PRA destinations
+temp <- merge(temp, dest, by = "RDRS_ID", all = TRUE)
+temp <- pivot_longer(temp, c("Facility", "Organization", "Entity"))
+temp <- temp[!is.na(temp$value),]
+temp <- temp[!duplicated(temp[,c("RDRS_ID", "value")]),]
+
+
+
+temp <- temp[,c("RDRS_ID", "SWIS_Number", "SWIS_No", "value")]
+colnames(temp) <- c("RDRS_ID", "SWIS_Number", "SWIS_No", "Dataset_Name")
+
+temp$Dataset_Name <- trimws(temp$Dataset_Name)
+temp <- temp[!duplicated(temp[,c("RDRS_ID", "Dataset_Name")]),]
+
+
+# give a standard name where we can
+temp$Standard_Name[duplicated(temp$RDRS_ID) ==FALSE] <- temp$Dataset_Name[duplicated(temp$RDRS_ID) ==FALSE]
+
+
+
+# temp has been saved as Names_Key and then manually fixed, so don't resave it
+#write.csv(temp, paste0(mypath, "MFA_Data/Names_Key_SAFETY_NAME_JUST_IN_CASE.csv"))
+
+
+```
+
+## Add Jurisdiction Disposal and Beneficial Reuse
+```{r}
+
+juris <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/JurisdictionDisposalAndBeneficial.csv"))
+
+juris <- juris[,c("Destination_Facility", "County")]
+
+# get entity between ()
+juris$Entity <- gsub(".*\\((.*)\\).*", "\\1",juris$Destination_Facility)
+juris$Destination_Facility <- trimws(sub("\\(.*", "", juris$Destination_Facility))
+
+
+# RDRS_ID
+juris$RDRS_ID <- substring(juris$Entity, nchar(juris$Entity)-7+1)
+juris$Entity <- trimws(substring(juris$Entity, 1, nchar(juris$Entity)-10+1))
+
+juris <- juris[,c(4,1,3)]
+colnames(juris) <- c("RDRS_ID", "Org", "Entity")
+
+# remove duplicates
+juris <- juris[!duplicated(juris[,c("Org", "Entity")]),]
+
+
+
+
+
+# read in the key to attach
+
+key <- read.csv(paste0(mypath, "MFA_Data/Names_Key.csv"))
+
+
+key <- merge(key, juris, by = "RDRS_ID", all = TRUE)
+key$Org <- trimws(key$Org)
+
+# check if the Org matches
+key$match <- NA
+
+
+# this checks for duplicates between the known dataset names and the new names that were just added
+# if one of the two new names that were just added matches the known dataset name, duplicated will return a TRUE
+# sum then adds these up, if no TRUE was returned (sum = 0), the known name does not match either of the new added names
+# HOWEVER, some 0s will be bc some facilities have same RDRS ID for multiple activities 
+key$match[is.na(key$Org) == FALSE] <- sapply(which(is.na(key$Org) == FALSE), FUN = function(x){
+                                                sum(duplicated(c(key$Dataset_Name[x],key$Org[x],key$Entity[x])))})
+
+# so now we need to check all the 0s and see if they have a match
+temp <- key[is.na(key$match) == FALSE,]
+
+aggregate(temp$match ~ temp$RDRS_ID, FUN = sum)
+
+
+```
+So from this, we can conclude that we do not need to add JurisdictionDisposalAndReuse.csv to the names key
+because all names are already there.
+This is confirmed through the aggregate bc it is all higher than 0
+
+## Landfill Beneficial Reuse
+```{r}
+
+BU <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/LandfillsBeneficialReuseTons.csv"))
+
+BU <- BU[!duplicated(BU$Reporting_Entity), 
+         c("RDRS_ID", "Reporting_Entity")]
+BU$Reporting_Entity <- trimws(BU$Reporting_Entity)
+
+
+
+key <- read.csv(paste0(mypath, "MFA_Data/Names_Key.csv"))
+
+
+key <- merge(key, BU, by = "RDRS_ID", all = TRUE)
+
+
+
+# check if the Org matches
+key$match <- NA
+
+
+# this checks for duplicates between the known dataset names and the new names that were just added
+# if one of the two new names that were just added matches the known dataset name, duplicated will return a TRUE
+# sum then adds these up, if no TRUE was returned (sum = 0), the known name does not match either of the new added names
+# HOWEVER, some 0s will be bc some facilities have same RDRS ID for multiple activities 
+key$match[is.na(key$Reporting_Entity) == FALSE] <- sapply(which(is.na(key$Reporting_Entity) == FALSE), FUN = function(x){
+                                                sum(duplicated(c(key$Dataset_Name[x],key$Reporting_Entity[x])))})
+
+# so now we need to check all the 0s and see if they have a match
+temp <- key[is.na(key$match) == FALSE,]
+
+aggregate(temp$match ~ temp$RDRS_ID, FUN = sum)
+
+```
+All names in Landfill Beneficial Reuse are already in the Names Key
+
+## Mixed Waste Organics Source Separated Reovery
+```{r}
+
+
+mixed <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/MixedWasteOrganicSourceSeperatedRecovery.csv"))
+
+mixed <- mixed[is.na(mixed$Source_Separated_Organics_Recovery_Rate_Pct) == FALSE |
+                      is.na(mixed$Mixed_Waste_Organics_Recovery_Rate_Pct) == FALSE, c("Organization", "SWIS")]
+
+
+
+# get entity between ()
+mixed$Entity <- gsub(".*\\((.*)\\).*", "\\1",mixed$Organization)
+mixed$Organization <- trimws(sub("\\(.*", "", mixed$Organization))
+
+
+# RDRS_ID
+mixed$RDRS_ID <- substring(mixed$Entity, nchar(mixed$Entity)-7+1)
+mixed$Entity <- trimws(substring(mixed$Entity, 1, nchar(mixed$Entity)-10+1))
+
+
+
+
+
+key <- read.csv(paste0(mypath, "MFA_Data/Names_Key.csv"))
+
+
+key <- merge(key, mixed, by = "RDRS_ID", all = TRUE)
+
+
+
+# check if the Org matches
+key$match <- NA
+
+
+# convert to this
+# # check for matches
+# both$match <- NA
+# both$match[!is.na(both$Facility_Name)] <- 
+#     both$Dataset_Name[!is.na(both$Facility_Name)] == both$Facility_Name[!is.na(both$Facility_Name)]
+# 
+
+
+# this checks for duplicates between the known dataset names and the new names that were just added
+# if one of the two new names that were just added matches the known dataset name, duplicated will return a TRUE
+# sum then adds these up, if no TRUE was returned (sum = 0), the known name does not match either of the new added names
+# HOWEVER, some 0s will be bc some facilities have same RDRS ID for multiple activities 
+key$match[is.na(key$Organization) == FALSE] <- sapply(which(is.na(key$Organization) == FALSE), FUN = function(x){
+                                                sum(duplicated(c(key$Dataset_Name[x],
+                                                                 key$Organization[x],
+                                                                 key$Entity[x])))})
+
+# so now we need to check all the 0s and see if they have a match
+temp <- key[is.na(key$match) == FALSE,]
+
+temp <- aggregate(temp$match ~ temp$RDRS_ID, FUN = sum)
+colnames(temp) <- c("RDRS_ID", "match")
+
+temp <- temp[temp$match == 0,]
+
+
+
+
+key[key$RDRS_ID %in% temp$RDRS_ID[temp$match == 0],]
+
+
+```
+Two new facilities were added:
+RD10944 - Rent-A-Bin (which had previously been removed as I thought it was metals only based on the name) was added. 
+100% source separated recovery rate, must be organics bin rentals
+
+There was also Clearlake Recycling Facility, which might not exist? There is a facility nearby, so I manually added the info. 
+The RDRS_ID is RD12030.
+
+
+
+# SWIS-Based Datasets
+We're going to merge these on their own first
+
+
+## SWIS Database
+```{r}
+
+
+SWIS <- read.csv(paste0(mypath, "MFA_Data/SiteActivities2.csv"))
+
+SWIS <- SWIS[,c("SWIS.Number", "Site.Name", "Activity", "Activity.Category", "Activity.Classification")]
+
+
+SWIS <- SWIS[SWIS$Activity.Category %in% c("Composting", "In-Vessel Digestion", "Disposal", "Transfer/Processing"),]
+
+
+SWIS <- SWIS[!(SWIS$Activity %in% c("Agricultural Material Composting Operation",
+                                    "Asbestos Containing Waste Disposal Site",
+                                    "Biosolids Composting at POTWs", "CDI Waste Disposal Facility",
+                                    "Contaminated Soil Disposal Facility", 
+                                    "Contaminated Soil Transfer/Processing Operation",
+                                    "Dairy In-Vessel Digestion Operation", 
+                                    "Emergency CDI Debris Processing Operation", "Emergency Transfer/Processing Operation",
+                                    "Industrial Waste Codisposal Facility", "Inert Debris Engineered Fill Operation", 
+                                    "Inert Debris Type A and B Processing Facility", "Inert Debris Type A Processing Operation",
+                                    "Inert Waste Disposal Site", "Large Volume CDI Debris Processing Facility", 
+                                    "Medium Volume C&D Wood Debris Chipping and Grinding Facility",
+                                    "Medium Volume CDI Debris Processing Facility", 
+                                    "Nonhazardous Ash Disposal/Monofill Facility","
+                                    Nonhazardous Ash Transfer/Processing Operation",
+                                    "Nonhazardous Petroleum Contaminated Soil Transfer/Processing Operation",
+                                    "Research Composting Operation", "Research In-Vessel Digestion Operation",
+                                    "Sealed Containers Transfer Operation", "Secondary Material Processing Operation",
+                                    "Sludge Composting Facility", 
+                                    "Small Volume C&D Wood Debris Chipping and Grinding Operation",
+                                    "Small Volume CDI Debris Processing Operation",
+                                    "Treatment Unit (in situ)", "Treatment Unit (processing)",
+                                    "Nonhazardous Ash Transfer/Processing Operation")),]
+
+
+# remove duplicates SWIS number + Site name combos
+SWIS <- SWIS[!duplicated(SWIS[,c("SWIS.Number", "Site.Name")]),
+             c("SWIS.Number", "Site.Name")]
+
+
+colnames(SWIS) <- c("SWIS.Number", "SWIS_SiteName")
+
+SWIS$SWIS_SiteName <- trimws(SWIS$SWIS_SiteName)
+
+
+```
+
+## Sitewaste
+```{r}
+
+
+sitewaste <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/SiteWaste.csv"))
+    
+    # get facilities that accept organics
+sitewaste <- sitewaste[sitewaste$Waste.Type %in% c("Digestate", "Food Wastes",
+                                                       "Green Materials", "Mixed Municipal"),]
+
+
+sitewaste <- sitewaste[!duplicated(sitewaste$Site.Name),
+                       c("SWIS.Number", "Site.Name")]
+
+sitewaste$Site.Name <- trimws(sitewaste$Site.Name)
+colnames(sitewaste) <- c("SWIS.Number", "SW_Site.Name")
+
+
+
+```
+
+
+## CalRecycle STAR Data
+```{r}
+
+STAR <- read.csv(paste0(mypath, "MFA_Data/Compost_Facility_Data_CalRec.csv"))
+
+
+STAR <- STAR[!duplicated(STAR[,c("SWIS_Number", "Site_Name")]), c("SWIS_Number", "Site_Name")]
+
+STAR$Site_Name <- trimws(STAR$Site_Name)
+STAR$SWIS_Number <- trimws(STAR$SWIS_Number)
+
+colnames(STAR) <- c("SWIS_Number", "STAR_Site_Name")
+str(STAR)
+
+```
+
+
+
+## Merge SWIS (SiteActivity2),Sitewaste, and Star estimates
+```{r}
+
+
+all_SWIS <- merge(SWIS, sitewaste, by = "SWIS.Number", all = TRUE)
+
+all_SWIS <- merge(all_SWIS, STAR, by.x = "SWIS.Number", by.y = "SWIS_Number", all = TRUE)
+
+
+
+
+# pivot from wide to long
+# the rows added by the merge are now one column
+all_SWIS <- pivot_longer(all_SWIS, c("SWIS_SiteName", "SW_Site.Name", "STAR_Site_Name"))
+
+
+all_SWIS <- all_SWIS[!is.na(all_SWIS$value),]
+
+
+all_SWIS <- all_SWIS[,c(1,3)]
+
+colnames(all_SWIS) <- c("SWIS_Number", "Facility_Name")
+
+
+
+all_SWIS$SWIS_Number[all_SWIS$Facility_Name == "Tulare County - Visalia LF"] <- "54-AA-0009"
+all_SWIS$SWIS_Number[all_SWIS$Facility_Name == "Anderson Landfill"] <- "45-AA-0020"
+all_SWIS <- all_SWIS[all_SWIS$Facility_Name != "Riverside County",]
+
+# remove duplicate name + SWIS combos
+all_SWIS <- all_SWIS[!duplicated(all_SWIS[,c("SWIS_Number", "Facility_Name")]),]
+
+all_SWIS$Facility_Name <- trimws(all_SWIS$Facility_Name)
+
+```
+
+
+
+# SWIS + RDRS dataset merges
+start by merging based on SWIS, this will be only names that already have a SWIS number listed in RDRS
+```{r}
+
+
+key <- read.csv(paste0(mypath, "MFA_Data/Names_Key.csv"))
+key$SWIS_Number[key$SWIS_Number == ""] <- NA
+
+
+both <- merge(key, all_SWIS, by = "SWIS_Number", all.x = TRUE)
+
+
+
+# check for matches
+both$match <- NA
+both$match[!is.na(both$Facility_Name)] <- 
+    both$Dataset_Name[!is.na(both$Facility_Name)] == both$Facility_Name[!is.na(both$Facility_Name)]
+
+
+
+
+temp <- both[both$match == FALSE,]
+temp <- temp[!is.na(temp$RDRS_ID),]
+
+temp <- temp[,c("RDRS_ID", "Facility_Name", "Standard_Name", "SWIS_Number")]
+
+colnames(temp) <- colnames(key)
+
+temp <- temp[!duplicated(temp[,c("RDRS_ID", "Dataset_Name")]),]
+
+
+
+key <- rbind(key, temp)
+
+key <- key[order(key$RDRS_ID),]
+
+```
+
+now try to add SWIS numbers based by name (this got 46)
+```{r}
+
+colnames(all_SWIS) <- c("SWIS_SWIS", "Facility_Name")
+
+
+
+key <- merge(key, all_SWIS, by.x = "Dataset_Name", by.y = "Facility_Name", all.x = TRUE)
+
+
+key$SWIS_Number[is.na(key$SWIS_Number) == TRUE & is.na(key$SWIS_SWIS) == FALSE] <- 
+    key$SWIS_SWIS[is.na(key$SWIS_Number) == TRUE & is.na(key$SWIS_SWIS) == FALSE]
+
+key <- key[,c("RDRS_ID", "Dataset_Name", "Standard_Name", "SWIS_Number")]
+
+key <- key[order(key$RDRS_ID),]
+
+#write.csv(key, paste0(mypath, "MFA_Data/Names_Key2_DONT_RESAVE.csv"))
+
+```
+
+
+```{r}
+
+key <- read.csv(paste0(mypath, "MFA_Data/Names_Key2.csv"))
+
+str(key)
+
+
+key$Full_ID <- paste0(key$SWIS_Number,"-", key$RDRS_ID)
+
+key <- key[!duplicated(key),]
+
+#write.csv(key, paste0(mypath, "MFA_Data/Facility_Names_Key_DONTOVERWRITE.csv"))
+
+```
+
+
+```{r}
+
+
+key <- key[!duplicated(key),]
+
+
+
+
+```
+
+
+
+# Siteoperator
+```{r}
+library(readxl)
+```
+
+```{r}
+
+op <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/SiteOperators.csv"))
+
+
+ad <- read_excel(paste0(mypath, "CalRecycle_Public_Records_Requests/Survey_Addresses.xlsx"), sheet = 1)
+colnames(ad) <- gsub(" ", ".", colnames(ad))
+
+
+```
+
+```{r}
+
+
+ad <- merge(ad, op, by = "SWIS.Number", all.x = TRUE)
+
+
+ad <- ad[,c("SWIS.Number", "Mailing_Name", "Site.Name.y", "Operator.Name", "Contact.Name",
+            "Operator.Street.Address", "Operator.City", "Operator.State", "Operator.ZIP.Code")]
+
+str(ad)
+
+#write.csv(ad, paste0(mypath, "CalRecycle_Public_Records_Requests/Survey_Addresses_Operators.csv"))
+
+```
+
+# Add Facility/Activity Type Columns - 9/26/25
+After creating the names key, manually fixing things, then resaving, 
+I realize we need a column for the activity type so we can merge things properly when we only have a SWIS
+
+As it is now, sometimes we have to merge on just the SWIS which creates duplicates
+For example, YCCL has 2 types of composters, an AD, a CDI facility, and a landfill
+We need a Type column so we can merge just the composter onto it
+```{r}
+
+
+key <- read.csv(paste0(mypath, "MFA_Data/Facility_Names_Key.csv"))
+
+
+ID <- read.csv(paste0(mypath,"CalRecycle_Public_Records_Requests/Registered_Reporting_Entities_All.csv"))
+
+
+
+# Copied from Above
+
+# only recycler/composter or transfer/processer
+ID <- ID[ID$ActivityGeneral %in% c("Recycler/Composter", "Transfer/Processor", "Landfill"),]
+
+bad_word_list <- c("water reclamation", "water treatment", "wastewater", "biosolid",
+                   "sewer", "treatment plant", "water quality", "water recycling", 
+                   "metal", "scrap", "steel", "salvage", "aluminum","alloy", 
+                   "tire", "rubber", 
+                   "construction", "demolition", "inert", "gypsum","concrete",
+                   "asphalt","quarry", "aggregate", "cemex", "pavement", "crush", "gravel", 
+                   "battery", "batteries", "ewaste", "e-waste", "electronic", 
+                   "plastic", "poly", "bottle", "cans", "commodit", 
+                   "container", "pallet", "packaging", "rent-a-bin", 
+                   "mattress", "carpet", "fiber", "fibre", "paper", "shred",
+                   "trading", "export", "dairy", "test", "inactivate", 
+                   "ecology recycling", "replanet", "trucking")
+
+
+for(i in bad_word_list){
+    #print(paste0(i, " removes ", length(grep(i, tolower(ID$ReportingEntity)))))
+    ID <- ID[-grep(i, tolower(ID$ReportingEntity)),]
+}
+
+
+# do the same for the activity name
+# the grep in the subset makes the df go blank if the word is missing
+## so, remove words from bad word list
+bad_word_list <- bad_word_list[-which(bad_word_list %in% c("sewer", "water quality",
+                                                           "scrap", "steel", "salvage", "aluminum","alloy",
+                                                           "rubber", "demolition", "gypsum",
+                                                           "quarry", "cemex", "pavement",
+                                                           "battery", "batteries", "ewaste", "electronic",
+                                                           "plastic", "bottle", "cans", "commodit", "container", 
+                                                           "pallet", "packaging", "rent-a-bin", 
+                                                           "mattress", "carpet", "fiber", "fibre",
+                                                           "shred", "trading", "export", "test", "inactivate",
+                                                           "ecology recycling", "trucking"))]
+
+for(i in bad_word_list){
+    #print(paste0(i, " removes ", length(grep(i, tolower(ID$ActivityName)))))
+    ID <- ID[-grep(i, tolower(ID$ActivityName)),]
+}
+
+ID <- ID[-grep("oil recycling", tolower(ID$ActivityName)),]
+ID <- ID[-grep("bulky", tolower(ID$ActivityName)),]
+ID <- ID[-grep("cdi", tolower(ID$ActivityName)),]
+ID <- ID[-grep("wwtp", tolower(ID$ActivityName)),]
+ID <- ID[-grep("grit", tolower(ID$ActivityName)),]
+
+
+```
+
+add the activity general from the ID dataset to the names key
+```{r}
+
+
+key <- merge(key, ID[,c("RDRS_ID", "ReportingEntity", "ActivityName", "ActivityGeneral")],
+             by = "RDRS_ID", all.x = TRUE)
+
+
+
+```
+
+
+separate out the Recycler/Composters into Recylers and Composters
+```{r}
+
+# temporary
+key$ActivityGeneral[is.na(key$ActivityGeneral)] <- "NA"
+
+
+key$Type <- NA
+
+
+
+# now, lets try to as many obvious composters as we can
+## (we can't really grab obvious recyclers bc
+##   many facilities with "recycling" in their name are composters, 
+##   but everyone with "compost" in the name is a composter)
+good_name_list <- c("compost", "organic", "green material",
+                    "dirt", "soil", "fertilizer", "farm", "greenery", "agromin", "mushroom")
+
+# check both the dataset and the standard name
+for(i in good_name_list){
+    key$Type[grep(i, tolower(key$Dataset_Name))] <- "Composter"
+}
+
+for(i in good_name_list){
+    key$Type[grep(i, tolower(key$Standard_Name))] <- "Composter"
+}
+
+
+
+# some facilities have "Recycler/Composter" in their name, 
+## so we will actually have to remove those and check manually
+key$Type[grep("recycler/composter", tolower(key$Dataset_Name))] <- NA
+key$Type[grep("recycler/composter", tolower(key$Standard_Name))] <- NA
+
+
+
+
+# non If the activity general is not recycler/composter type is just gets its own activity
+key$Type[key$ActivityGeneral != "Recycler/Composter"] <-
+    key$ActivityGeneral[key$ActivityGeneral != "Recycler/Composter"]
+
+
+
+# convert "NA" back to NA
+key$ActivityGeneral[key$ActivityGeneral == "NA"] <- NA
+
+
+
+```
+
+select columns and save
+```{r}
+
+key <- key[,c("RDRS_ID", "Dataset_Name", "Standard_Name","SWIS_Number",
+              "Full_ID","ActivityGeneral","Type")]
+
+
+#write.csv(key,paste0(mypath, "MFA_Data/Facility_Names_Key2.csv"))
+
+```
+
+
+# Emailed Survey Contacts
+A sheet that will be used to help keep track of emailed surveys
+```{r}
+library(readxl)
+```
+
+```{r}
+
+mypath <- "C:/Users/Lenovo/Box/Research/"
+
+# load survey addresses sheet. 
+# These are the facilities that got mailed a letter
+adds <- read_excel(paste0(mypath, "CalRecycle_Public_Records_Requests/Survey_Addresses_Operators.xlsx"))
+
+# siteoperators dataset from CalRecycle
+opps <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/SiteOperators.csv"))
+opps <- as.data.frame(opps)
+
+
+SWIS <- read.csv(paste0(mypath, "MFA_Data/SiteActivities2.csv"))
+
+
+```
+
+```{r}
+
+str(adds)
+
+str(opps)
+
+
+str(SWIS)
+```
+
+
+```{r}
+
+# merge needed columns.
+# need facility types(SWIS) and the operator contact info (opps)
+
+adds <- merge(adds, opps[,c("SWIS.Number", "Started.On", "Contact.Title", "Contact.Email", "Operator.Phone")],
+              by = "SWIS.Number", all.x = TRUE)
+
+adds <- merge(adds, SWIS[,c("SWIS.Number", "Activity", "Site.Point.of.Contact", "Max.Permit.Capacity", "Capacity.UoM",
+                            "ZIP.Code.Reporting.Agency.Legal.Name", "Reporting.Agency.Department")],
+              by = "SWIS.Number", all.x = TRUE)
+
+
+```
+
+```{r}
+
+write.csv(adds, paste0(mypath, "CalRecycle_Public_Records_Requests/Survey_Addresses_Direct_Email.csv"))
+
+```
+
+
+
+
