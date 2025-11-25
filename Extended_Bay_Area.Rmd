@@ -1,0 +1,753 @@
+---
+title: "Extended_Bay_Area"
+output: html_document
+date: "2025-07-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(igraph)
+
+library(terra)
+library(tidyr)
+library(readxl)
+
+library(stringr)
+
+library(networkD3)
+
+source("C:/Users/Lenovo/Box/Research/MFA_Data/MFA_Functions.R")
+```
+
+
+Before running this data, you will need to change mypath to the path the data is stored in
+You may also need to change the paths when new data is read in as I currently have everything saved in different folders within the main folder. 
+Future upload will change this and have everything much more streamlined!!
+
+
+# Load Data
+```{r}
+
+
+mypath <- "C:/Users/Lenovo/Box/Research/"
+
+# shapefiles from CalGeoportal
+counties <- vect(paste0(mypath, "MFA_Data/GIS_Data/CA_Counties.shp"))
+cities <- vect(paste0(mypath, "MFA_Data/GIS_Data/CA_cities.shp"))
+
+
+# facility names key - I made this in Names_Key.Rmd + by hand refining
+key <- read.csv(paste0(mypath, "MFA_Data/Facility_Names_Key4.csv"))
+#ID <- read.csv(paste0(mypath,"CalRecycle_Public_Records_Requests/Registered_Reporting_Entities_All.csv"))
+
+# Sitewaste from CalRecycle Website
+sitewaste <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/SiteWaste.csv"))
+colnames(sitewaste) <- gsub("\\.", "_", colnames(sitewaste))
+
+
+# STAR data, this only includes compost facilities
+## Includes accepted materials 
+## as well as normalized throughput/capacity values
+STAR <- read.csv(paste0(mypath, "MFA_Data/Compost_Facility_Data_CalRec.csv"))
+STAR$Estimated_Throughput_Incoming_Feedstocks_TPY <-
+    as.numeric(gsub(",", "", STAR$Estimated_Throughput_Incoming_Feedstocks_TPY))
+
+# green waste outflows - from CalRecycle public records requests
+disposal <- read.csv(paste0(mypath, "MFA_Data/Public_Records_Requests/PRA_data_5302025_DisposalRelatedOutflows.csv"))
+disposal$Origin_Entity <- trimws(disposal$Origin_Entity)
+disposal$Destination_Entity <- trimws(disposal$Destination_Entity)
+
+green <- select_GreenWaste(x = disposal, ID_table = key)
+
+# organics outflows - from CalRecycle public records requests
+recycling <- read.csv(paste0(mypath,"MFA_Data/Public_Records_Requests/PRA_data_5302025_RecyclingRelatedOutflows.csv"))
+organics <- select_Organics(x = recycling)
+
+# Create an "Out of State" centroid
+## For now, were just going to remove the "Out of State" from the organics df
+organics <- organics[organics$Origin_County != "Out of State",]
+organics <- organics[organics$Destination_County != "Out of State",]
+
+# SWIS facility locations. Reprojected in QGIS to match counties/cities datasets
+## The colnames are messed up, so replace them with colnames from the unprojected SWIS file
+SWIS <- vect(paste0(mypath, "MFA_Data/GIS_Data/SWIS_SiteActivities2_Projected.shp"))
+names(SWIS) <-  gsub("\\.", "_",colnames(read.csv(paste0(mypath, "MFA_Data/SiteActivities2.csv"))))
+SWIS <- SWIS[SWIS$Site_Operational_Status %in% c("Active", "Planned"),] # remove closed sites
+
+# out of state facility points
+temp <- as.data.frame(SWIS[1])
+temp$SWIS_Number <- "XX-XX-XXXX"
+temp$Site_Name <- "Out of State"
+temp$lon <- -115 
+temp$lat = 38 
+
+temp <- vect(temp, crs = crs(SWIS)) #convert to spatVect
+SWIS <- rbind(SWIS, temp) # add to SWIS
+
+# out of state county polygon
+temp <- buffer(temp, width = 10000)
+values(temp) <- values(counties[1])
+temp$NAME <- "Out of State"
+temp$NAMELSAD <- "Out of State"
+
+counties <- rbind(counties, temp)
+
+
+{plot(counties, main = "spatial data")
+    points(SWIS, pch = 19, col = "blue")
+    plot(cities, border = "red", add = TRUE)
+}
+
+
+
+```
+
+
+## Assign Designated Facilies for each city
+assigns designated facilities based on this hierarchy
+1. Facilities listed in Franchise Agreement (FA)
+1a. If FA explicitly states "facility operated by CONTRACTOR" (or similar), use closest facility operated by Hauler
+2. If city is part of a JPA, use closest facility also used by JPA members
+3. If city's waste hauler operates a facility within the county, use that facility
+4. If the county operates a facility, send waste from cities within that county there
+5. If the city's waste hauler operates any facility, send waste to closest one
+6. Remaining cities go to closest facility
+
+Eligible facilities are any facility classified as "Compost Facility (Mixed)" or "Vegetative Food Compost Facility" in SWIS
+```{r}
+
+# franchise agreement data - data from franchise agreements available online
+FA <- read.csv(paste0(mypath, "Primary_Data_Files/Franchise_Agreements/Franchise_Agreement_Data_Cleaned.csv"))
+
+# cities in a JPA - I made this myself
+JPA <- read.csv(paste0(mypath, "MFA_Data/Regional_Waste_Agencies.csv"))
+
+# facility owners/operators
+## This is a cleaned version of the two datasets downloaded from CalRecycle
+owners <- read.csv(paste0(mypath, "MFA_Data/Compost_Facility_Owners.csv"))
+
+study_cities <- assign_Designated_Organics_Facilities(FA, key, JPA, owners, cities, SWIS)
+
+
+
+
+# at the moment, I can only handle a single designated facility for each city...
+# since we've been using the closest [Company] facility, lets send waste to the closest facility if there are multiple
+
+# find distance between city and facility
+study_cities$Distance <- apply(study_cities, 1, function(x){
+                             temp <- cities[which(cities$CITY == x["City"])] # get city shp
+                             temp2 <- SWIS[which(SWIS$SWIS_Number == x["SWIS_Number"])] # get the facility shp
+                             temp2 <- temp2[!duplicated(temp2$SWIS_Number)]
+                             n <- distance(temp, temp2) # find distance
+                             return(n[1]) })
+
+
+# select the closest facility for each city
+# aggregate finds the closest, merge does the selection
+study_cities <- merge(aggregate(Distance ~ City, study_cities, FUN = min), study_cities, 
+                      by = c("City", "Distance"))
+
+
+
+```
+
+## Waste generation data
+Local/Regional Waste characterization studies are used when possible
+
+Where missing, CalRecycle's 2021 Disposal-Based Waste Characterization Study is used. 
+We did not used the 2021 Generator-Based WCS as this was limited to a select few high-organics generating industries (restaurants, hospitals, etc), which is not representative of the overall waste stream.
+
+Self-Hauled waste is excluded
+
+Commercial and Multi-Family Organics % - 24.7
+Single-Family Residential % - 27.0
+Mixed Waste (comingled waste from transfer station) - 22.8% organics
+
+Composition of Total Waste Stream (Statewide from 2019 Disposal WCS)
+Commercial and Multi-Family - 48.1%
+Single-Family Residential - 32.1%
+Self-Hauled - 19.7%
+
+```{r}
+
+# local WCS data
+wcs <- read.csv(paste0(mypath, "Primary_Data_Files/Franchise_Agreements/Cities_List_clean.csv"))
+# colnames include "FW_Pct" for Food Waste Percent, but actually this is organics pct, not FW
+
+
+wcs$Source_Type[is.na(wcs$MSW_Com_FW_Pct)] <- "Statewide WCS" # is.na overrides rows w/ tonnage data
+wcs$Source_Year[is.na(wcs$MSW_Com_FW_Pct)] <- 2021
+
+# add missing values from Statewide Study
+wcs$MSW_SF_Res_FW_Pct[is.na(wcs$MSW_SF_Res_FW_Pct)] <- 27
+wcs$MSW_Com_FW_Pct[is.na(wcs$MSW_Com_FW_Pct)] <- 48.1
+wcs$MSW_MF_Res_FW_Pct[is.na(wcs$MSW_MF_Res_FW_Pct)] <- 48.1
+
+
+#waste generation data from CalRecycle
+## technically this is disposal data, but we are using it to estimate generation
+generation <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/OverallJurisdictionTonsForDisposal.csv"))
+
+
+
+# estimate organic waste generation
+study_cities <- estimate_Waste_Generation(wcs, generation)
+
+
+```
+
+
+
+## transfer station data
+Since jurisdiction disposal and WCS are done on a city level, we can do this analysis on a city level as well
+```{r}
+
+# directly from CalRecycle
+transfer <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/TotalJurisdictionDisposalTransferProcessor.csv"))
+
+transfer <- clean_transfer(transfer)
+
+
+```
+
+
+
+
+
+# Calculate Flows
+## Direct to waste facility flows
+```{r}
+
+# 
+# all_direct_tons <- rbind(calculate_direct_transfer_export_flows_wcs(transfer, study_cities,
+#                                                           "Green Materials", "Green Materials", "direct"),
+#                          calculate_direct_transfer_export_flows_wcs(transfer, study_cities,
+#                                                                 "Solid Waste", "Organics", "direct"))
+
+
+all_direct_tons <- calculate_direct_transfer_export_flows(transfer, study_cities, "Solid Waste", "direct")
+
+
+
+
+# igraph links
+direct_links <- create_links(all_direct_tons,
+                             origin_col = "Origin_City", dest_col = "Designated_Full_ID")
+
+
+
+
+
+
+```
+
+
+
+
+
+## Thru transfer flows
+This will tell us, for both material types, how much is going through each transfer station
+```{r}
+
+# 
+# all_transfer_tons <- rbind(calculate_direct_transfer_export_flows_wcs(transfer, waste_generation,
+#                                                           "Green Materials", "Green Materials", "transfer"),
+#                          calculate_direct_transfer_export_flows_wcs(transfer, waste_generation,
+#                                                                 "Solid Waste", "Organics", "transfer"))
+
+all_transfer_tons <- calculate_direct_transfer_export_flows(transfer, study_cities, "Solid Waste", "transfer")
+
+
+# remove transferred tons to Los Angeles
+## These are likely not organic waste, but its technically impossible really to tell for sure
+## The facility these go to accept Mixed Waste, but not green/food specifically, mostly recyclables and inerts
+## There are also no compost or greenwaste outflows from Los Angeles in the PRA data
+### Given these facts, it is safe to assume we can remove this flow from the data as an outlier...
+all_transfer_tons <- all_transfer_tons[all_transfer_tons$Transfer_County != "Los Angeles",]
+
+
+#igraph links
+transfer_links <- create_links(all_transfer_tons,
+                               origin_col = "Origin_City", dest_col = "Transfer_Full_ID")
+
+transfer_links <- add_transfer_to_compost_links(transfer_links)
+
+```
+for each county, we select the largest one
+Then, for counties without a facility in it,
+   We send to the closest compost facility (that meets certain size/type requirements)
+
+We could go straight to closest facility, but my guess is that counties want to keep things within their county
+
+More realistically, we could have waste sent to a compost facility that is owned by the transfer station company
+- I think ultimately we should do this and/or just use the designated facility...
+- I actually wonder how much that would change the results, I bet they are actually somewhat similar
+
+
+
+
+## Exported flows
+```{r}
+
+# none of the cities in our current waste generation data export more than 100 tons of waste
+# if we were to include more cities in the waste generation data, we would have export data
+# all_export_tons <- rbind(calculate_direct_transfer_export_flows(transfer, waste_generation,
+#                                                           "Green Materials", "Green Materials", "export"),
+#                          calculate_direct_transfer_export_flows(transfer, waste_generation,
+#                                                                 "Solid Waste", "Organics", "export"))
+
+
+all_export_tons <- calculate_direct_transfer_export_flows(transfer, study_cities, "Solid Waste", "export")
+
+
+#igraph links
+export_links <- create_links(all_export_tons,
+                             origin_col = "Origin_City", dest_col = "Designated_Full_ID")
+
+```
+
+
+## Compost Facility Outflows
+Okay so some of the columns are somewhat redundant or are like subcolumns of one another
+One of these is the Material_Stream and End_User_Category columns. The End_User_Category is more specific than Material Stream
+
+
+Lets make the function to be applied over each of the material subcategories
+It will separate into end user category
+```{r}
+
+
+
+# organics outflows only from facilities that are direct or transfer destinations
+compost_study_area <- c(direct_links$Destination, transfer_links$Destination) # destination facilities
+compost_study_area <- substr(compost_study_area, 1, 10) # SWIS IDs
+compost_study_area <- as.data.frame(SWIS[SWIS$SWIS_Number %in% compost_study_area]) # compost facility SWIS
+compost_study_area <- unique(compost_study_area$County) # unique counties
+compost_study_area <- paste0(compost_study_area, " (County)")
+
+compost_study_area <- organics[organics$Origin_Region %in% compost_study_area,]
+
+
+
+# jurisdiction disposal data to filter compost outflows
+juris_dis <- read.csv(paste0(mypath, "MFA_Data/Data_Central_CalRecycle/JurisdictionDisposalAndBeneficial.csv"))
+juris_dis <- clean_JurisdictionDisposal(juris_dis)
+
+
+
+# calculate compost outflows
+all_compost_facility_outflows <- lapply(levels(as.factor(compost_study_area$Material_Subcategory)), 
+                                                         FUN = calculate_compost_outflows,
+                                        organics_df = compost_study_area, 
+                                        juris_disposal = juris_dis) 
+all_compost_facility_outflows <- do.call(rbind, all_compost_facility_outflows)
+
+
+
+
+
+#igraph links
+compost_links <- create_links(all_compost_facility_outflows,
+                              origin_col = "Origin_County", dest_col = "Destination_County")
+
+
+
+
+
+```
+Important to note on compost outflows: outflows are reduced by % of county disposal that comes from outside study area
+For example, lots of waste from Sonoma county (in study area) goes to Mendocino county (outside study area) for composting. Waste from Mendocino county is also going to Mendocino. 
+
+
+
+## Green Waste Outflows
+Where do these fit in.....
+I think we would want to aggregate the Origin Facilities to their Counties..
+Origins would need to be the same level as the organics data (county level)
+
+In this case, Material Stream tells us our End_Use.
+```{r}
+
+# 
+# 
+# 
+# # only green outflows from counties with direct flows
+# green_study_area <- green[green$Origin_County %in%
+#                               unique(all_direct_tons$Designated_County[!is.na(all_direct_tons$Designated_County)]),]
+# 
+# 
+# all_green_outflows <- calculate_green_outflows(green_study_area)
+
+
+# # igraph links
+# green_links <- create_links(all_green_outflows,
+#                             origin_col = "Origin_County", dest_col = "Destination_Full_ID")
+
+```
+At this point, thats all we really need.... We don't even need this to be a function really lol
+
+
+
+# igraph waste generation
+
+Create vertex info dfs for use with igraph
+```{r}
+
+        
+direct_vi <- create_vertex_info(direct_links)
+
+transfer_vi <- create_vertex_info(transfer_links)
+
+export_vi <- create_vertex_info(export_links)
+
+compost_vi <- create_vertex_info(compost_links)
+
+
+# not including green right now, not included in local wcs data
+# green_vi <- create_vertex_info(green_links)
+
+```
+
+
+
+```{r}
+
+
+
+
+plot_single_flow <- function(links, vertex_info, plot_title = "add plot_title"){
+
+    network <- graph_from_data_frame(d = links, directed = T, vertices = vertex_info)
+
+    # identify counties that have a vertex point in them for plotting
+    # counties are not contiguous, using extent to select counties would fix
+    counties_to_plot <- terra::intersect(counties, 
+                                     vect(vertex_info, geom=c("lat", "long"),
+                                          crs=crs(counties), keepgeom=FALSE))
+    
+
+    {plot(counties[counties$NAME %in% unique(counties_to_plot$NAME)], 
+          main = plot_title)
+    plot(network,
+         edge.arrow.size = 0.25,
+         edge.color = E(network)$color,
+         vertex.size = 10,
+         vertex.label.cex = 0.00001,
+         vertex.color = V(network)$color,
+         layout = cbind(V(network)$lat, V(network)$long),
+         add = TRUE, rescale = FALSE)}
+
+} # close function
+
+
+
+# unincorporated areas are not in the study area
+
+
+plot_single_flow(direct_links, direct_vi, "direct flows to facility")
+
+plot_single_flow(transfer_links, transfer_vi, "transferred flows")
+
+
+plot_single_flow(export_links, export_vi, "directly exported flows")
+
+plot_single_flow(compost_links, compost_vi, "compost flows from facility")
+
+#plot_single_flow(green_links, green_vi, "green flows from facilty")
+```
+default <- "black"
+County <- "blue"
+City <- "red"
+Facility <- "green"
+
+
+So these plots are showing things going to facilities in LA County that do not accept organics
+In the transfer data, we need to filter out facilities that do not accept organics (or mixed waste)
+
+
+To really plot this right with different colors,
+the Origin/Destination type will need to specify what type of facility (compost, transfer, landfill)
+That will really take some work, will need to use SWIS to determine facility type
+
+
+# all Flows
+```{r}
+
+
+all_links <- rbind(direct_links, transfer_links, compost_links)
+# no export over 100 tons in current study area
+
+all_vi <- create_vertex_info(all_links)
+
+plot_single_flow(all_links, all_vi, "all flows")
+
+
+```
+
+
+
+
+# D3 sankey diagram
+converting igraph to network to use with the sankey diagram
+In order to get a value, the network edges can only have one attribute (that value)
+If there are multiple attributes to the node, then igraph_to_networkD3 won't know which. 
+
+Once we have that, we can add stuff to the links or nodes df manually. 
+The nodes df is in order and correlates to the IDs (STARTING AT 0) that are in links
+
+However, to make the Sankey, we won't be able to use the same network as the graphed diagram
+because it won't go to where we need it to go. The nodes will also have to include different waste types etc, not just locations to get it to look right. 
+
+There's also TONS of Sankey visualizers...
+```{r}
+
+
+# In order to get a value, the network edges can only have one attribute (that value)
+# If there are multiple attributes to the node, then igraph_to_networkD3 won't know which. 
+network2 <- delete_edge_attr(network, "color")
+network2 <- delete_edge_attr(network2, "Flow_Type")
+
+members <- membership(cluster_walktrap(network2)) # still not sure what members is....
+
+# Convert to object suitable for networkD3
+d3 <- igraph_to_networkD3(network2, group = members)
+
+
+# add source and target node to d3
+d3$links$source_node <- d3$nodes[d3$links$source + 1, "name"]
+d3$links$target_node <- d3$nodes[d3$links$target + 1, "name"]
+
+# use that to add the rest of the information
+d3$links <- merge(d3$links, links, 
+              by.x = c("source_node", "target_node", "value"),
+              by.y = c("Origin", "Destination", "Tons_Sent"))
+
+
+forceNetwork(Links = d3$links, Nodes = d3$nodes,
+             Source = 'source', Target = 'target',
+             NodeID = 'name', Group = 'group')
+
+
+
+# okay so we can color the flows by adding them to links
+# however, we really need to do it on purpose here....
+#d3$links$waste_type <- c(rep("organics", 25), rep("transfer", 25), rep("compost", 55))
+
+
+sankeyNetwork(Links = d3$links, Nodes = d3$nodes, 
+              Source = "source", Target = "target", 
+              Value = "value", NodeID = "name",
+              LinkGroup = 'color', NodeGroup = NULL)
+
+
+```
+
+
+Now the next challenge is to add green waste into the mix.
+
+Also, the masses need to balance.......
+
+```{r}
+
+network$name
+
+links
+
+```
+
+
+Okay, so it looks like we did something wrong here lolol
+I wonder what members means? 
+What are the different lines (dotted vs hashed)
+
+
+# Igraph statistics
+```{r}
+
+# degree centrality for each vertex in the graph (number of connections each vertex has)
+degree(network)
+
+print("In degree -----------------")
+degree(network, mode = "in")
+
+print("out degree -----------------")
+degree(network, mode = "out")
+
+```
+
+The global efficiency of a network is defined as the average of inverse distances between all pairs of vertices.
+
+local: We remove the vertex and compute the distances (shortest path lengths) between its neighbours through the rest of the network. The local efficiency around the removed vertex is the average of the inverse of these distances.
+
+The average local efficiency of a network is simply the arithmetic mean of the local efficiencies of all the vertices;
+```{r}
+
+# effiency 
+global_efficiency(network, weights = E(network)$Tons_Sent, directed = TRUE)
+
+# local effiency
+print("local in")
+local_efficiency(network, vids = V(network), weights = E(network)$Tons_Sent, directed = TRUE, mode = "in")
+print("local out")
+local_efficiency(network, vids = V(network), weights = E(network)$Tons_Sent, directed = TRUE, mode = "out")
+print("local all")
+local_efficiency(network, vids = V(network), weights = E(network)$Tons_Sent, directed = TRUE, mode = "all")
+print("local total")
+local_efficiency(network, vids = V(network), weights = E(network)$Tons_Sent, directed = TRUE, mode = "total")
+
+print("avg local in (also has out, all, total)")
+average_local_efficiency(network, weights = E(network)$Tons_Sent, directed = TRUE,mode = "in")
+```
+```{r}
+
+# first order "all" (could be out or in too)
+print("first order")
+neighborhood_size(network,order = 1, nodes = V(network),mode = "all", mindist = 0)
+
+print("second order")
+neighborhood_size(network,order = 2, nodes = V(network),mode = "all", mindist = 0)
+
+```
+ 
+ 
+ 
+ 
+ 
+## WCS data
+We're not using this right now
+```{r}
+
+# 
+# 
+# temp <- list()
+# 
+# for (i in 1:37){
+#     temp[[i]] <- as.data.frame(read_xlsx(path = paste0(mypath,
+#                                                        "MFA_Data/WCS_Data/Cities/ResidentialStreamsExport (",i,").xlsx"),
+#                             sheet = 2))
+# 
+# }
+# 
+# wcs <- do.call(rbind, temp)
+# 
+# colnames(wcs) <- gsub(" ", "_", colnames(wcs))
+# colnames(wcs) <- gsub("\\(", "", colnames(wcs))
+# colnames(wcs) <- gsub("\\)", "", colnames(wcs))
+# 
+# # get only needed waste types
+# wcs <- wcs[wcs$Material_Type %in% c("Branches and Stumps", "Leaves and Grass",
+#                                      "Food", 
+#                                     "Prunings and Trimmings","Other Miscellaneous Paper - Compostable",
+#                                     "Remainder / Composite Paper - Compostable"),]
+# 
+# 
+# # "Remainder / Composite Organic" left out, but could potentially be included
+# 
+# 
+# 
+# 
+# # summarize
+# wcs$Jurisdictions <- as.factor(wcs$Jurisdictions)
+# 
+# 
+# 
+# wcs$Material_Class <- NA
+# wcs$Material_Class[wcs$Material_Type %in% c("Branches and Stumps",
+#                                             "Leaves and Grass", "Prunings and Trimmings")] <- "Green Materials"
+# wcs$Material_Class[wcs$Material_Type %in% c("Food",
+#                                             "Other Miscellaneous Paper - Compostable", 
+#                                             "Remainder / Composite Paper - Compostable")] <- "Organics"
+# 
+# 
+# 
+# 
+# wcs_totals <- aggregate(wcs$Total_Residential_Tons ~ wcs$Jurisdictions + wcs$Material_Class, FUN = sum)
+# colnames(wcs_totals) <- c("City", "Material_Class", "Total.Residential.Tons")
+# 
+# 
+# 
+# 
+# # add counties to the WCS totals
+# waste_generation <- merge(as.data.frame(cities[,c("COUNTY", "CITY")]), wcs_totals, by.x = "CITY", by.y = "City", all.y = TRUE)
+# 
+# 
+# # add designated facility
+# waste_generation <- merge(waste_generation, des_facs[des_facs$Fac_Level == 1,],
+#                        by.x = "CITY", by.y = "City", all.x = TRUE)
+# 
+# 
+# 
+# 
+# # add county for facility
+# waste_generation <- merge(waste_generation, SWIS[!duplicated(SWIS$SWIS_Number),c("SWIS_Number","County")],
+#                        by = "SWIS_Number")
+# colnames(waste_generation)[which(colnames(waste_generation) %in%
+#                                      c("SWIS_Number",
+#                                        "CITY",
+#                                        "COUNTY",
+#                                        "Facility_Name",
+#                                        "RDRS_ID",
+#                                        "Full_ID",
+#                                        "County"))] <- c("Designated_SWIS",
+#                                                         "Origin_City",
+#                                                         "Origin_County",
+#                                                         "Designated_Facility",
+#                                                         "Designated_RDRS_ID", 
+#                                                         "Designated_Full_ID",
+#                                                         "Designated_County")
+# 
+# 
+# 
+# waste_generation$Origin_County <- sub(" County", "", waste_generation$Origin_County)
+# 
+
+
+```
+
+
+# Some code to get tables 
+Also not using this right now, 
+```{r}
+
+# # populations from Wikipedia
+# temp <- data.frame(county = c("Alameda", "Contra Costa", "Marin",
+#                               "Napa", "Sacramento", "San Francisco",
+#                               "San Joaquin", "San Mateo", "Santa Clara",
+#                               "Santa Cruz", "Solano", "Sonoma", 
+#                               "Stanislaus", "Yolo"),
+#                    population = c(1649060, 1172607, 256400,
+#                                   132727, 1611231, 827526,
+#                                   816108, 742893, 1926325,
+#                                   262406, 455101, 485375,
+#                                   556972, 225251))
+# 
+# 
+# 
+# # facilities in study area
+# temp <- as.data.frame(SWIS[SWIS$County %in% c("Alameda", "Contra Costa", "Marin",
+#                               "Napa", "Sacramento", "San Francisco",
+#                               "San Joaquin", "San Mateo", "Santa Clara",
+#                               "Santa Cruz", "Solano", "Sonoma", 
+#                               "Stanislaus", "Yolo")])
+# 
+# 
+# # have to reset the temp before running either of these
+# 
+# temp <- temp[temp$Activity_Operational_Status == "Active" & temp$Activity == "Solid Waste Landfill",]
+# temp <- temp[temp$Activity_Operational_Status == "Active" & temp$Activity_Category == "Composting",]
+# temp <- temp[temp$Activity_Operational_Status == "Active" & temp$Activity_Category == "Transfer/Processing",]
+# 
+# table(temp$Activity)
+# 
+# 63 + 15
+# 
+# 
+# 
+# table(organics$Material_Type)
+
+```
